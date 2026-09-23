@@ -6,8 +6,64 @@ import whois
 app = Flask(__name__)
 
 # ==========================================
+# CẤU HÌNH CLOUDFLARE API (Cần điền)
+# ==========================================
+# Bạn có thể điền cứng ở đây, hoặc thiết lập trong Environment của Render
+CF_API_TOKEN = os.environ.get("CF_API_TOKEN", "")  
+CF_ACCOUNT_ID = os.environ.get("CF_ACCOUNT_ID", "") 
+
+# ==========================================
 # 1. CÁC HÀM KIỂM TRA & XỬ LÝ DỮ LIỆU
 # ==========================================
+
+def check_cf_eligibility(domain):
+    """Giả lập add domain vào CF để check xem có bị Banned không"""
+    if not CF_API_TOKEN or not CF_ACCOUNT_ID:
+        return "<span style='color:gray'>Thiếu API CF</span>"
+
+    url = "https://api.cloudflare.com/client/v4/zones"
+    headers = {
+        "Authorization": f"Bearer {CF_API_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "name": domain,
+        "account": {"id": CF_ACCOUNT_ID},
+        "jump_start": False
+    }
+
+    try:
+        r = requests.post(url, headers=headers, json=data, timeout=10)
+        resp = r.json()
+
+        # Trường hợp 1: Domain add thành công (Đã có người đăng ký & không bị cấm)
+        if r.status_code == 200 and resp.get("success"):
+            # Xóa ngay lập tức để không làm rác tài khoản CF của bạn
+            zone_id = resp["result"]["id"]
+            requests.delete(f"{url}/{zone_id}", headers=headers)
+            return "<span style='color:#28a745; font-weight:bold;'>Sạch (Add Thành Công)</span>"
+
+        # Trường hợp 2: Bị vướng lỗi (Cấm, chưa mua, v.v...)
+        errors = resp.get("errors", [])
+        if errors:
+            err_code = errors[0].get("code")
+            
+            if err_code == 1049:
+                return "<span style='color:#007bff; font-weight:bold;'>Sạch (Chưa Đăng Ký) - Mua Tốt</span>"
+            elif err_code == 1097:
+                return "<span style='color:red; font-weight:bold;'>BỊ BANNED BỞI CF (Không mua)</span>"
+            elif err_code == 1095:
+                return "<span style='color:red; font-weight:bold;'>Bị CF Chặn Add</span>"
+            elif err_code == 1116:
+                return "<span style='color:orange; font-weight:bold;'>Đuôi TLD bị CF cấm</span>"
+            elif err_code == 1061:
+                return "<span style='color:#28a745; font-weight:bold;'>Sạch (Đã nằm trong CF khác)</span>"
+            else:
+                return f"<span style='color:gray;'>Lỗi CF: {err_code}</span>"
+                
+        return "<span style='color:gray;'>Không rõ trạng thái</span>"
+    except Exception as e:
+        return "<span style='color:red;'>Lỗi Call API CF</span>"
 
 def get_nameservers(domain):
     ns_list = []
@@ -19,8 +75,7 @@ def get_nameservers(domain):
             if 'Answer' in data:
                 ns_list = [ans['data'].rstrip('.') for ans in data['Answer'] if ans['type'] == 2]
                 return ns_list
-    except:
-        pass
+    except: pass
 
     try:
         url = f"https://cloudflare-dns.com/dns-query?name={domain}&type=NS"
@@ -31,9 +86,7 @@ def get_nameservers(domain):
             if 'Answer' in data:
                 ns_list = [ans['data'].rstrip('.') for ans in data['Answer'] if ans['type'] == 2]
                 return ns_list
-    except:
-        pass
-
+    except: pass
     return ns_list
 
 def get_domain_info(domain):
@@ -41,14 +94,12 @@ def get_domain_info(domain):
     registrar = None
     is_registered = False
 
-    # 1. Thử dùng RDAP API
     try:
         url = f"https://rdap.org/domain/{domain}"
-        r = requests.get(url, timeout=15) # Tăng timeout
+        r = requests.get(url, timeout=15)
         if r.status_code == 200:
             is_registered = True
             data = r.json()
-            
             statuses = data.get('status', [])
             for s in statuses:
                 s_lower = s.lower()
@@ -56,7 +107,6 @@ def get_domain_info(domain):
                     status_found.add('serverHold')
                 if 'client hold' in s_lower or 'clienthold' in s_lower:
                     status_found.add('clientHold')
-                    
             entities = data.get('entities', [])
             for ent in entities:
                 if 'registrar' in ent.get('roles', []):
@@ -66,10 +116,8 @@ def get_domain_info(domain):
                             if prop[0] == 'fn':
                                 registrar = prop[3]
                                 break
-    except:
-        pass
+    except: pass
 
-    # 2. Nếu RDAP không được, dùng python-whois
     if not is_registered or not registrar or not status_found:
         try:
             w = whois.whois(domain)
@@ -87,8 +135,7 @@ def get_domain_info(domain):
                             status_found.add('clientHold')
                 if w.registrar and not registrar:
                     registrar = w.registrar
-        except:
-            pass
+        except: pass
 
     if not is_registered:
         return "Chưa đăng ký / Ẩn thông tin", "Không có dữ liệu"
@@ -113,14 +160,14 @@ HTML_TEMPLATE = """
     <link rel="icon" type="image/x-icon" href="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRRtG00dWfkGqx_XWIYqY09Yp_bIx0Oaj9y-9CDJET5Tg&s=10">
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f4f7f6; padding: 20px; color: #333; }
-        .container { max-width: 1200px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .container { max-width: 1400px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         textarea { width: 100%; height: 150px; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 10px; font-family: monospace; }
         button { background: #007bff; color: white; border: none; padding: 10px 20px; font-size: 16px; border-radius: 4px; cursor: pointer; }
         button:hover { background: #0056b3; }
         button:disabled { background: #cccccc; cursor: not-allowed; }
         .progress { margin-top: 10px; font-size: 14px; color: #555; }
         .table-wrapper { overflow-x: auto; margin-top: 20px; }
-        table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 900px; }
+        table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 1100px; }
         th, td { border: 1px solid #ddd; padding: 10px; text-align: left; vertical-align: middle; white-space: nowrap; }
         th { background-color: #f8f9fa; }
         .hold { color: #dc3545; font-weight: bold; }
@@ -132,8 +179,8 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="container">
-        <h2>Công cụ kiểm tra Hàng loạt Domain</h2>
-        <p>Kiểm tra NS, Registrar, Cloudflare, trạng thái Hold. Không giới hạn số lượng.</p>
+        <h2>Công cụ săn & kiểm tra Domain (Hold, Banned CF, NS)</h2>
+        <p>Kiểm tra xem tên miền có bị Cloudflare ban trước khi mua hay không. Hỗ trợ check NS, Hold status.</p>
         <textarea id="domainList" placeholder="Nhập domain vào đây...&#10;google.com&#10;dantri.com.vn"></textarea>
         <button id="btnCheck" onclick="startCheck()">Bắt đầu kiểm tra</button>
         <div class="progress" id="progressText"></div>
@@ -143,10 +190,11 @@ HTML_TEMPLATE = """
                 <thead>
                     <tr>
                         <th width="15%">Domain</th>
+                        <th width="15%">Kiểm tra Add CF (Mua)</th>
                         <th width="20%">Nhà đăng ký (Registrar)</th>
-                        <th width="15%">Trạng thái</th>
-                        <th width="15%">Cloudflare</th>
-                        <th width="35%">Nameservers (NS)</th>
+                        <th width="15%">Trạng thái Hold</th>
+                        <th width="10%">Cloudflare NS</th>
+                        <th width="25%">Nameservers Hiện tại</th>
                     </tr>
                 </thead>
                 <tbody id="resultBody">
@@ -177,7 +225,7 @@ HTML_TEMPLATE = """
                 document.getElementById('progressText').innerText = `Đang xử lý: ${completed}/${domains.length} ...`;
                 const row = document.createElement('tr');
                 row.id = `row-${domain}`;
-                row.innerHTML = `<td><b>${domain}</b></td><td colspan="4" style="color:gray;">Đang kiểm tra...</td>`;
+                row.innerHTML = `<td><b>${domain}</b></td><td colspan="5" style="color:gray;">Đang xử lý ngầm...</td>`;
                 tbody.appendChild(row);
 
                 try {
@@ -187,10 +235,7 @@ HTML_TEMPLATE = """
                         body: JSON.stringify({domain: domain})
                     });
                     
-                    // Bắt lỗi HTTP status (500, 502, 504...)
-                    if (!response.ok) {
-                        throw new Error(`Server báo lỗi ${response.status}`);
-                    }
+                    if (!response.ok) throw new Error("Lỗi Server");
                     
                     const data = await response.json();
                     
@@ -199,7 +244,7 @@ HTML_TEMPLATE = """
 
                     let nsText = data.ns.length > 0 ? 
                         data.ns.join(', ') : 
-                        '<span style="color:red; font-weight:bold;">Không có Nameserver</span>';
+                        '<span style="color:red; font-weight:bold;">Không có NS</span>';
 
                     let cfBadge = data.is_cloudflare ? 
                         '<span class="badge-cf-yes">Đang dùng</span>' : 
@@ -207,7 +252,8 @@ HTML_TEMPLATE = """
 
                     row.innerHTML = `
                         <td><b>${domain}</b></td>
-                        <td style="${data.registrar === 'Không có dữ liệu' || data.registrar === 'Lỗi Timeout Server' ? 'color:red' : ''}">${data.registrar}</td>
+                        <td>${data.cf_add_status}</td>
+                        <td style="${data.registrar === 'Không có dữ liệu' ? 'color:red' : ''}">${data.registrar}</td>
                         <td class="${statusClass}">${data.status}</td>
                         <td>${cfBadge}</td>
                         <td>${nsText}</td>
@@ -215,10 +261,7 @@ HTML_TEMPLATE = """
                 } catch (e) {
                     row.innerHTML = `
                         <td><b>${domain}</b></td>
-                        <td style="color:red;">Lỗi Timeout / Proxy</td>
-                        <td class="hold">Không tra cứu được</td>
-                        <td><span class="badge-cf-no">Không rõ</span></td>
-                        <td><span style="color:red;">Thử lại sau</span></td>
+                        <td colspan="5" style="color:red;">Lỗi quá tải, thử lại sau</td>
                     `;
                 }
                 completed++;
@@ -237,7 +280,6 @@ def index():
 
 @app.route('/api/check', methods=['POST'])
 def api_check():
-    # Bao bọc bằng Try...Except để luôn trả về JSON dù hệ thống bị quá tải
     try:
         data = request.get_json()
         domain = data.get('domain', '').strip()
@@ -245,8 +287,10 @@ def api_check():
         if not domain:
             return jsonify({"status": "Lỗi", "ns": [], "registrar": "", "is_cloudflare": False}), 400
 
+        # Kiểm tra song song các thông tin
         ns_list = get_nameservers(domain)
         status, registrar = get_domain_info(domain)
+        cf_add_status = check_cf_eligibility(domain)
         
         is_cloudflare = False
         if ns_list:
@@ -254,17 +298,18 @@ def api_check():
         
         return jsonify({
             "domain": domain,
+            "cf_add_status": cf_add_status,
             "registrar": registrar,
             "status": status,
             "ns": ns_list,
             "is_cloudflare": is_cloudflare
         })
     except Exception as e:
-        # Nếu backend có văng lỗi, báo về UI dạng chuẩn JSON thay vì màn hình 500 HTML
         return jsonify({
             "domain": domain if 'domain' in locals() else "Unknown",
-            "registrar": "Lỗi Backend Server",
-            "status": "Lỗi hệ thống",
+            "cf_add_status": "Lỗi Backend",
+            "registrar": "Lỗi",
+            "status": "Lỗi",
             "ns": [],
             "is_cloudflare": False
         })

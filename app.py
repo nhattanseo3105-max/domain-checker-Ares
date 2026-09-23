@@ -11,29 +11,27 @@ app = Flask(__name__)
 
 def get_nameservers(domain):
     ns_list = []
-    # Ưu tiên 1: Google DoH API
     try:
         url = f"https://dns.google/resolve?name={domain}&type=NS"
-        r = requests.get(url, timeout=5)
+        r = requests.get(url, timeout=10)
         if r.status_code == 200:
             data = r.json()
             if 'Answer' in data:
                 ns_list = [ans['data'].rstrip('.') for ans in data['Answer'] if ans['type'] == 2]
                 return ns_list
-    except Exception as e:
+    except:
         pass
 
-    # Fallback 2: Cloudflare DoH API
     try:
         url = f"https://cloudflare-dns.com/dns-query?name={domain}&type=NS"
         headers = {'accept': 'application/dns-json'}
-        r = requests.get(url, headers=headers, timeout=5)
+        r = requests.get(url, headers=headers, timeout=10)
         if r.status_code == 200:
             data = r.json()
             if 'Answer' in data:
                 ns_list = [ans['data'].rstrip('.') for ans in data['Answer'] if ans['type'] == 2]
                 return ns_list
-    except Exception as e:
+    except:
         pass
 
     return ns_list
@@ -43,10 +41,10 @@ def get_domain_info(domain):
     registrar = None
     is_registered = False
 
-    # Ưu tiên 1: Sử dụng RDAP API
+    # 1. Thử dùng RDAP API
     try:
         url = f"https://rdap.org/domain/{domain}"
-        r = requests.get(url, timeout=5)
+        r = requests.get(url, timeout=15) # Tăng timeout
         if r.status_code == 200:
             is_registered = True
             data = r.json()
@@ -68,10 +66,10 @@ def get_domain_info(domain):
                             if prop[0] == 'fn':
                                 registrar = prop[3]
                                 break
-    except Exception:
+    except:
         pass
 
-    # Fallback 2: Python-whois
+    # 2. Nếu RDAP không được, dùng python-whois
     if not is_registered or not registrar or not status_found:
         try:
             w = whois.whois(domain)
@@ -89,11 +87,11 @@ def get_domain_info(domain):
                             status_found.add('clientHold')
                 if w.registrar and not registrar:
                     registrar = w.registrar
-        except Exception:
+        except:
             pass
 
     if not is_registered:
-        return "Chưa đăng ký / Lỗi Check", "Không có dữ liệu"
+        return "Chưa đăng ký / Ẩn thông tin", "Không có dữ liệu"
 
     final_status = " | ".join(list(status_found)) if status_found else "Active / OK"
     final_registrar = registrar if registrar else "Không xác định"
@@ -112,7 +110,6 @@ HTML_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Quản Lý Domain - dev by Ares</title>
-    <!-- Add Favicon -->
     <link rel="icon" type="image/x-icon" href="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRRtG00dWfkGqx_XWIYqY09Yp_bIx0Oaj9y-9CDJET5Tg&s=10">
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f4f7f6; padding: 20px; color: #333; }
@@ -121,27 +118,15 @@ HTML_TEMPLATE = """
         button { background: #007bff; color: white; border: none; padding: 10px 20px; font-size: 16px; border-radius: 4px; cursor: pointer; }
         button:hover { background: #0056b3; }
         button:disabled { background: #cccccc; cursor: not-allowed; }
-        
         .progress { margin-top: 10px; font-size: 14px; color: #555; }
-        
-        /* Table Styles - Force 1 line */
         .table-wrapper { overflow-x: auto; margin-top: 20px; }
         table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 900px; }
-        th, td { 
-            border: 1px solid #ddd; 
-            padding: 10px; 
-            text-align: left; 
-            vertical-align: middle; 
-            white-space: nowrap; /* Bắt buộc không xuống dòng */
-        }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; vertical-align: middle; white-space: nowrap; }
         th { background-color: #f8f9fa; }
-        
         .hold { color: #dc3545; font-weight: bold; }
         .ok { color: #28a745; font-weight: bold; }
-        
         .badge-cf-yes { background: #f6821f; color: white; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; display: inline-block; }
         .badge-cf-no { background: #6c757d; color: white; padding: 4px 10px; border-radius: 12px; font-size: 12px; display: inline-block; }
-        
         .footer { text-align: center; margin-top: 30px; font-weight: bold; color: #666; font-size: 14px; }
     </style>
 </head>
@@ -168,7 +153,6 @@ HTML_TEMPLATE = """
                 </tbody>
             </table>
         </div>
-        
         <div class="footer">dev by Ares</div>
     </div>
 
@@ -191,7 +175,6 @@ HTML_TEMPLATE = """
 
             for (let domain of domains) {
                 document.getElementById('progressText').innerText = `Đang xử lý: ${completed}/${domains.length} ...`;
-                
                 const row = document.createElement('tr');
                 row.id = `row-${domain}`;
                 row.innerHTML = `<td><b>${domain}</b></td><td colspan="4" style="color:gray;">Đang kiểm tra...</td>`;
@@ -204,12 +187,16 @@ HTML_TEMPLATE = """
                         body: JSON.stringify({domain: domain})
                     });
                     
+                    // Bắt lỗi HTTP status (500, 502, 504...)
+                    if (!response.ok) {
+                        throw new Error(`Server báo lỗi ${response.status}`);
+                    }
+                    
                     const data = await response.json();
                     
                     let statusClass = data.status.includes('Hold') ? 'hold' : 'ok';
                     if(data.status.includes('Chưa đăng ký')) statusClass = 'hold';
 
-                    // Chuyển NS thành 1 dòng, cách nhau bằng dấu phẩy
                     let nsText = data.ns.length > 0 ? 
                         data.ns.join(', ') : 
                         '<span style="color:red; font-weight:bold;">Không có Nameserver</span>';
@@ -220,7 +207,7 @@ HTML_TEMPLATE = """
 
                     row.innerHTML = `
                         <td><b>${domain}</b></td>
-                        <td>${data.registrar}</td>
+                        <td style="${data.registrar === 'Không có dữ liệu' || data.registrar === 'Lỗi Timeout Server' ? 'color:red' : ''}">${data.registrar}</td>
                         <td class="${statusClass}">${data.status}</td>
                         <td>${cfBadge}</td>
                         <td>${nsText}</td>
@@ -228,7 +215,10 @@ HTML_TEMPLATE = """
                 } catch (e) {
                     row.innerHTML = `
                         <td><b>${domain}</b></td>
-                        <td colspan="4" style="color:red;">Lỗi kết nối tới Server/API</td>
+                        <td style="color:red;">Lỗi Timeout / Proxy</td>
+                        <td class="hold">Không tra cứu được</td>
+                        <td><span class="badge-cf-no">Không rõ</span></td>
+                        <td><span style="color:red;">Thử lại sau</span></td>
                     `;
                 }
                 completed++;
@@ -247,28 +237,38 @@ def index():
 
 @app.route('/api/check', methods=['POST'])
 def api_check():
-    data = request.get_json()
-    domain = data.get('domain', '').strip()
-    
-    if not domain:
-        return jsonify({"status": "Lỗi", "ns": [], "registrar": "", "is_cloudflare": False}), 400
+    # Bao bọc bằng Try...Except để luôn trả về JSON dù hệ thống bị quá tải
+    try:
+        data = request.get_json()
+        domain = data.get('domain', '').strip()
+        
+        if not domain:
+            return jsonify({"status": "Lỗi", "ns": [], "registrar": "", "is_cloudflare": False}), 400
 
-    ns_list = get_nameservers(domain)
-    status, registrar = get_domain_info(domain)
-    
-    is_cloudflare = False
-    if ns_list:
-        is_cloudflare = any('cloudflare.com' in ns.lower() for ns in ns_list)
-    
-    return jsonify({
-        "domain": domain,
-        "registrar": registrar,
-        "status": status,
-        "ns": ns_list,
-        "is_cloudflare": is_cloudflare
-    })
+        ns_list = get_nameservers(domain)
+        status, registrar = get_domain_info(domain)
+        
+        is_cloudflare = False
+        if ns_list:
+            is_cloudflare = any('cloudflare.com' in ns.lower() for ns in ns_list)
+        
+        return jsonify({
+            "domain": domain,
+            "registrar": registrar,
+            "status": status,
+            "ns": ns_list,
+            "is_cloudflare": is_cloudflare
+        })
+    except Exception as e:
+        # Nếu backend có văng lỗi, báo về UI dạng chuẩn JSON thay vì màn hình 500 HTML
+        return jsonify({
+            "domain": domain if 'domain' in locals() else "Unknown",
+            "registrar": "Lỗi Backend Server",
+            "status": "Lỗi hệ thống",
+            "ns": [],
+            "is_cloudflare": False
+        })
 
 if __name__ == '__main__':
-    # Fix cổng port để tương thích render.com (Port mặc định 5000 nếu test ở local)
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)

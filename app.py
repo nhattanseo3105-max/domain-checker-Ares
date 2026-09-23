@@ -8,7 +8,6 @@ app = Flask(__name__)
 # ==========================================
 # CẤU HÌNH CLOUDFLARE API (Cần điền)
 # ==========================================
-# Bạn có thể điền cứng ở đây, hoặc thiết lập trong Environment của Render
 CF_API_TOKEN = os.environ.get("CF_API_TOKEN", "")  
 CF_ACCOUNT_ID = os.environ.get("CF_ACCOUNT_ID", "") 
 
@@ -36,18 +35,14 @@ def check_cf_eligibility(domain):
         r = requests.post(url, headers=headers, json=data, timeout=10)
         resp = r.json()
 
-        # Trường hợp 1: Domain add thành công (Đã có người đăng ký & không bị cấm)
         if r.status_code == 200 and resp.get("success"):
-            # Xóa ngay lập tức để không làm rác tài khoản CF của bạn
             zone_id = resp["result"]["id"]
             requests.delete(f"{url}/{zone_id}", headers=headers)
             return "<span style='color:#28a745; font-weight:bold;'>Sạch (Add Thành Công)</span>"
 
-        # Trường hợp 2: Bị vướng lỗi (Cấm, chưa mua, v.v...)
         errors = resp.get("errors", [])
         if errors:
             err_code = errors[0].get("code")
-            
             if err_code == 1049:
                 return "<span style='color:#007bff; font-weight:bold;'>Sạch (Chưa Đăng Ký) - Mua Tốt</span>"
             elif err_code == 1097:
@@ -140,7 +135,8 @@ def get_domain_info(domain):
     if not is_registered:
         return "Chưa đăng ký / Ẩn thông tin", "Không có dữ liệu"
 
-    final_status = " | ".join(list(status_found)) if status_found else "Active / OK"
+    # Đổi chữ Active / OK thành Không bị hold theo yêu cầu
+    final_status = " | ".join(list(status_found)) if status_found else "Không bị hold"
     final_registrar = registrar if registrar else "Không xác định"
     
     return final_status, final_registrar
@@ -156,41 +152,86 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Quản Lý Domain - dev by Ares</title>
-    <link rel="icon" type="image/x-icon" href="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRRtG00dWfkGqx_XWIYqY09Yp_bIx0Oaj9y-9CDJET5Tg&s=10">
+    <title>Domain Checker - Ares</title>
+    <link rel="icon" type="image/png" href="https://cdn-icons-png.magnific.com/256/15435/15435750.png?semt=ais_white_label">
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f4f7f6; padding: 20px; color: #333; }
-        .container { max-width: 1400px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        textarea { width: 100%; height: 150px; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 10px; font-family: monospace; }
-        button { background: #007bff; color: white; border: none; padding: 10px 20px; font-size: 16px; border-radius: 4px; cursor: pointer; }
-        button:hover { background: #0056b3; }
-        button:disabled { background: #cccccc; cursor: not-allowed; }
-        .progress { margin-top: 10px; font-size: 14px; color: #555; }
-        .table-wrapper { overflow-x: auto; margin-top: 20px; }
-        table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 1100px; }
-        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; vertical-align: middle; white-space: nowrap; }
-        th { background-color: #f8f9fa; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f4f7f6; padding: 20px; color: #333; transition: 0.3s; }
+        .container { max-width: 1400px; margin: auto; background: #fff; padding: 25px; border-radius: 12px; box-shadow: 0 8px 16px rgba(0,0,0,0.08); }
+        textarea { width: 100%; height: 150px; padding: 12px; box-sizing: border-box; border: 1px solid #ced4da; border-radius: 6px; margin-bottom: 15px; font-family: monospace; transition: border-color 0.2s; }
+        textarea:focus { border-color: #007bff; outline: none; box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.25); }
+        
+        .action-bar { display: flex; gap: 10px; margin-bottom: 15px; }
+        button { border: none; padding: 10px 20px; font-size: 16px; border-radius: 6px; cursor: pointer; transition: all 0.2s ease-in-out; font-weight: 500; }
+        .btn-primary { background: #007bff; color: white; box-shadow: 0 4px 6px rgba(0, 123, 255, 0.2); }
+        .btn-primary:hover:not(:disabled) { background: #0056b3; transform: translateY(-1px); box-shadow: 0 6px 8px rgba(0, 123, 255, 0.3); }
+        .btn-secondary { background: #6c757d; color: white; }
+        .btn-secondary:hover { background: #5a6268; transform: translateY(-1px); }
+        button:disabled { background: #cccccc; cursor: not-allowed; transform: none; box-shadow: none; }
+        
+        .progress { margin-top: 10px; font-size: 14px; color: #555; font-weight: 500; }
+        
+        .table-wrapper { overflow-x: auto; margin-top: 20px; border-radius: 8px; box-shadow: 0 0 0 1px #dee2e6; }
+        table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 1100px; background: #fff; }
+        th, td { border-bottom: 1px solid #dee2e6; padding: 12px 15px; text-align: left; vertical-align: middle; white-space: nowrap; }
+        th { background-color: #f8f9fa; font-weight: 600; color: #495057; border-bottom: 2px solid #dee2e6; }
+        
+        /* Hiệu ứng Hover mượt mà cho Table Row */
+        tbody tr { transition: background-color 0.2s ease; }
+        tbody tr:hover { background-color: #f1f8ff; }
+        
         .hold { color: #dc3545; font-weight: bold; }
         .ok { color: #28a745; font-weight: bold; }
-        .badge-cf-yes { background: #f6821f; color: white; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; display: inline-block; }
-        .badge-cf-no { background: #6c757d; color: white; padding: 4px 10px; border-radius: 12px; font-size: 12px; display: inline-block; }
-        .footer { text-align: center; margin-top: 30px; font-weight: bold; color: #666; font-size: 14px; }
+        .badge-cf-yes { background: #f6821f; color: white; padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; display: inline-block; box-shadow: 0 2px 4px rgba(246, 130, 31, 0.3); }
+        .badge-cf-no { background: #6c757d; color: white; padding: 5px 12px; border-radius: 20px; font-size: 12px; display: inline-block; }
+        .skipped { color: #adb5bd; font-style: italic; }
+
+        /* Modal Styles */
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); backdrop-filter: blur(4px); opacity: 0; transition: opacity 0.3s ease; }
+        .modal.show { display: flex; align-items: center; justify-content: center; opacity: 1; }
+        .modal-content { background-color: #fff; padding: 25px; border-radius: 12px; width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); transform: translateY(-20px); transition: transform 0.3s ease; }
+        .modal.show .modal-content { transform: translateY(0); }
+        .close-btn { color: #aaa; float: right; font-size: 24px; font-weight: bold; cursor: pointer; line-height: 1; margin-top: -5px; transition: color 0.2s; }
+        .close-btn:hover { color: #333; }
+        .settings-item { margin: 12px 0; display: flex; align-items: center; cursor: pointer; }
+        .settings-item input { margin-right: 10px; width: 16px; height: 16px; cursor: pointer; }
+        .settings-item label { cursor: pointer; font-size: 15px; user-select: none; }
+
+        /* Footer Gradient Animation */
+        .footer { text-align: center; margin-top: 40px; font-weight: 800; font-size: 18px; letter-spacing: 1px; }
+        .gradient-text {
+            background: linear-gradient(270deg, #ff007f, #007bff, #00d2ff, #ff007f);
+            background-size: 400% 400%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: gradientShift 4s ease infinite;
+        }
+        @keyframes gradientShift { 
+            0% { background-position: 0% 50% } 
+            50% { background-position: 100% 50% } 
+            100% { background-position: 0% 50% } 
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h2>Công cụ săn & kiểm tra Domain (Hold, Banned CF, NS)</h2>
-        <p>Kiểm tra xem tên miền có bị Cloudflare ban trước khi mua hay không. Hỗ trợ check NS, Hold status.</p>
-        <textarea id="domainList" placeholder="Nhập domain vào đây...&#10;google.com&#10;dantri.com.vn"></textarea>
-        <button id="btnCheck" onclick="startCheck()">Bắt đầu kiểm tra</button>
-        <div class="progress" id="progressText"></div>
+        <h2>Domain Checker - Ares</h2>
+        <p style="color: #6c757d; margin-bottom: 20px;">Hỗ trợ kiểm tra hàng loạt trạng thái Hold, Nhà đăng ký, và danh sách đen của Cloudflare.</p>
+        
+        <textarea id="domainList" placeholder="Nhập domain vào đây (mỗi domain 1 dòng)...&#10;google.com&#10;dantri.com.vn"></textarea>
+        
+        <div class="action-bar">
+            <button id="btnCheck" class="btn-primary" onclick="startCheck()">🚀 Bắt đầu kiểm tra</button>
+            <button class="btn-secondary" onclick="openSettings()">⚙️ Cài đặt check</button>
+        </div>
+        
+        <div class="progress" id="progressText">Sẵn sàng.</div>
 
         <div class="table-wrapper">
             <table>
                 <thead>
                     <tr>
                         <th width="15%">Domain</th>
-                        <th width="15%">Kiểm tra Add CF (Mua)</th>
+                        <th width="15%">Trạng thái CF</th>
                         <th width="20%">Nhà đăng ký (Registrar)</th>
                         <th width="15%">Trạng thái Hold</th>
                         <th width="10%">Cloudflare NS</th>
@@ -201,10 +242,45 @@ HTML_TEMPLATE = """
                 </tbody>
             </table>
         </div>
-        <div class="footer">dev by Ares</div>
+        
+        <div class="footer"><span class="gradient-text">DEV by Ares</span></div>
+    </div>
+
+    <!-- Cửa sổ Popup Cài Đặt -->
+    <div id="settingsModal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" onclick="closeSettings()">&times;</span>
+            <h3 style="margin-top: 0; color: #333;">⚙️ Cài đặt kiểm tra</h3>
+            
+            <div class="settings-item">
+                <!-- Mặc định TẮT Trạng thái CF theo yêu cầu -->
+                <input type="checkbox" id="chk_cf">
+                <label for="chk_cf">Kiểm tra Trạng thái CF (Có thể Add CF)</label>
+            </div>
+            
+            <div class="settings-item">
+                <input type="checkbox" id="chk_whois" checked>
+                <label for="chk_whois">Kiểm tra Nhà đăng ký & Trạng thái Hold</label>
+            </div>
+            
+            <div class="settings-item">
+                <input type="checkbox" id="chk_ns" checked>
+                <label for="chk_ns">Kiểm tra Nameserver & Cloudflare NS</label>
+            </div>
+            
+            <button class="btn-primary" style="margin-top: 20px; width: 100%;" onclick="closeSettings()">Lưu cài đặt</button>
+        </div>
     </div>
 
     <script>
+        // Xử lý Popup Setting
+        const modal = document.getElementById("settingsModal");
+        function openSettings() { modal.classList.add("show"); }
+        function closeSettings() { modal.classList.remove("show"); }
+        window.onclick = function(event) {
+            if (event.target == modal) closeSettings();
+        }
+
         async function startCheck() {
             const btn = document.getElementById('btnCheck');
             const text = document.getElementById('domainList').value;
@@ -215,45 +291,65 @@ HTML_TEMPLATE = """
                 return;
             }
 
+            // Đọc cấu hình từ Settings
+            const options = {
+                check_cf: document.getElementById('chk_cf').checked,
+                check_whois: document.getElementById('chk_whois').checked,
+                check_ns: document.getElementById('chk_ns').checked
+            };
+
             const tbody = document.getElementById('resultBody');
             tbody.innerHTML = '';
             btn.disabled = true;
-
             let completed = 0;
 
             for (let domain of domains) {
-                document.getElementById('progressText').innerText = `Đang xử lý: ${completed}/${domains.length} ...`;
+                document.getElementById('progressText').innerText = `⏳ Đang xử lý: ${completed}/${domains.length} ...`;
                 const row = document.createElement('tr');
                 row.id = `row-${domain}`;
-                row.innerHTML = `<td><b>${domain}</b></td><td colspan="5" style="color:gray;">Đang xử lý ngầm...</td>`;
+                row.innerHTML = `<td><b>${domain}</b></td><td colspan="5" style="color:#6c757d; font-style:italic;">Đang quét dữ liệu...</td>`;
                 tbody.appendChild(row);
 
                 try {
                     const response = await fetch('/api/check', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({domain: domain})
+                        body: JSON.stringify({domain: domain, options: options})
                     });
                     
                     if (!response.ok) throw new Error("Lỗi Server");
-                    
                     const data = await response.json();
                     
-                    let statusClass = data.status.includes('Hold') ? 'hold' : 'ok';
-                    if(data.status.includes('Chưa đăng ký')) statusClass = 'hold';
+                    // Render Status Hold
+                    let statusClass = "ok";
+                    if(data.status.includes('Hold') || data.status.includes('Chưa đăng ký')) statusClass = 'hold';
+                    if(data.status === "Bỏ qua") statusClass = 'skipped';
 
-                    let nsText = data.ns.length > 0 ? 
-                        data.ns.join(', ') : 
-                        '<span style="color:red; font-weight:bold;">Không có NS</span>';
+                    // Render NS
+                    let nsText = "";
+                    if (data.ns === "Bỏ qua") {
+                        nsText = '<span class="skipped">Bỏ qua</span>';
+                    } else if (data.ns.length > 0) {
+                        nsText = data.ns.join(', ');
+                    } else {
+                        nsText = '<span style="color:red; font-weight:bold;">Không có NS</span>';
+                    }
 
-                    let cfBadge = data.is_cloudflare ? 
-                        '<span class="badge-cf-yes">Đang dùng</span>' : 
-                        '<span class="badge-cf-no">Không dùng</span>';
+                    // Render Cloudflare Badge
+                    let cfBadge = '<span class="skipped">Bỏ qua</span>';
+                    if (data.is_cloudflare !== "Bỏ qua") {
+                        cfBadge = data.is_cloudflare ? 
+                            '<span class="badge-cf-yes">Đang dùng</span>' : 
+                            '<span class="badge-cf-no">Không dùng</span>';
+                    }
+
+                    let cfAddStatus = data.cf_add_status === "Bỏ qua" ? '<span class="skipped">Bỏ qua</span>' : data.cf_add_status;
+                    let registrarText = data.registrar === "Bỏ qua" ? '<span class="skipped">Bỏ qua</span>' : (data.registrar === 'Không có dữ liệu' ? `<span style="color:red">${data.registrar}</span>` : data.registrar);
 
                     row.innerHTML = `
                         <td><b>${domain}</b></td>
-                        <td>${data.cf_add_status}</td>
-                        <td style="${data.registrar === 'Không có dữ liệu' ? 'color:red' : ''}">${data.registrar}</td>
+                        <td>${cfAddStatus}</td>
+                        <td>${registrarText}</td>
                         <td class="${statusClass}">${data.status}</td>
                         <td>${cfBadge}</td>
                         <td>${nsText}</td>
@@ -266,7 +362,7 @@ HTML_TEMPLATE = """
                 }
                 completed++;
             }
-            document.getElementById('progressText').innerText = `Hoàn thành ${completed}/${domains.length} domain!`;
+            document.getElementById('progressText').innerText = `✅ Hoàn thành ${completed}/${domains.length} domain!`;
             btn.disabled = false;
         }
     </script>
@@ -283,18 +379,32 @@ def api_check():
     try:
         data = request.get_json()
         domain = data.get('domain', '').strip()
+        options = data.get('options', {}) # Nhận tùy chọn kiểm tra từ Frontend
         
         if not domain:
             return jsonify({"status": "Lỗi", "ns": [], "registrar": "", "is_cloudflare": False}), 400
 
-        # Kiểm tra song song các thông tin
-        ns_list = get_nameservers(domain)
-        status, registrar = get_domain_info(domain)
-        cf_add_status = check_cf_eligibility(domain)
-        
-        is_cloudflare = False
-        if ns_list:
-            is_cloudflare = any('cloudflare.com' in ns.lower() for ns in ns_list)
+        # Khởi tạo giá trị mặc định là "Bỏ qua"
+        ns_list = "Bỏ qua"
+        status = "Bỏ qua"
+        registrar = "Bỏ qua"
+        cf_add_status = "Bỏ qua"
+        is_cloudflare = "Bỏ qua"
+
+        # 1. Kiểm tra Nameserver nếu được chọn
+        if options.get('check_ns', True):
+            ns_list = get_nameservers(domain)
+            is_cloudflare = False
+            if ns_list:
+                is_cloudflare = any('cloudflare.com' in ns.lower() for ns in ns_list)
+
+        # 2. Kiểm tra WHOIS / Hold nếu được chọn
+        if options.get('check_whois', True):
+            status, registrar = get_domain_info(domain)
+
+        # 3. Kiểm tra Trạng thái Add CF nếu được chọn
+        if options.get('check_cf', False):
+            cf_add_status = check_cf_eligibility(domain)
         
         return jsonify({
             "domain": domain,

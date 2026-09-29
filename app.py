@@ -61,14 +61,14 @@ def check_cf_eligibility(domain):
         if r.status_code == 200 and resp.get("success"):
             zone_id = resp["result"]["id"]
             requests.delete(f"{url}/{zone_id}", headers=headers, timeout=5)
-            return "<span style='color:#28a745; font-weight:bold;'>Sạch (Add Thành Công)</span>"
+            return "<span style='color:#28a745; font-weight:bold;'>Sạch</span>"
         errors = resp.get("errors", [])
         if errors:
             err_code = errors[0].get("code")
             if err_code == 1049:
                 return "<span style='color:#007bff; font-weight:bold;'>Sạch (Chưa Đăng Ký) - Mua Tốt</span>"
             elif err_code == 1097:
-                return "<span style='color:red; font-weight:bold;'>BỊ BANNED BỞI CF (Không mua)</span>"
+                return "<span style='color:red; font-weight:bold;'>BANNED</span>"
             elif err_code == 1095:
                 return "<span style='color:red; font-weight:bold;'>Bị CF Chặn Add</span>"
             elif err_code == 1116:

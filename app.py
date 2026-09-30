@@ -191,7 +191,6 @@ def format_status_display(status_set):
         "ok": ("Active", "badge-success"),
     }
 
-    # Ưu tiên hiển thị các status quan trọng trước
     priority = [
         "serverHold", "clientHold", "pendingTransfer",
         "redemptionPeriod", "pendingDelete",
@@ -206,7 +205,6 @@ def format_status_display(status_set):
             text, cls = labels.get(key, (key, "badge-muted"))
             badges.append(f"<span class='badge {cls}'>{text}</span>")
 
-    # Các status còn lại (nếu có)
     for key in status_set:
         if key not in priority:
             badges.append(f"<span class='badge badge-muted'>{key}</span>")
@@ -420,7 +418,7 @@ HTML_TEMPLATE = """
             display: flex;
             align-items: center;
             justify-content: space-between;
-            margin-bottom: 32px;
+            margin-bottom: 28px;
             flex-wrap: wrap;
             gap: 16px;
         }
@@ -460,7 +458,7 @@ HTML_TEMPLATE = """
             border: 1px solid var(--border);
             border-radius: var(--radius);
             padding: 24px;
-            margin-bottom: 20px;
+            margin-bottom: 16px;
             box-shadow: 0 4px 24px rgba(0,0,0,0.25);
         }
 
@@ -576,40 +574,59 @@ HTML_TEMPLATE = """
             50% { opacity: 0.4; transform: scale(0.85); }
         }
 
-        /* Legend / Note */
+        /* ========== LEGEND (gọn & phân loại) ========== */
         .legend {
             background: var(--bg-card);
             border: 1px solid var(--border);
             border-radius: var(--radius);
-            padding: 20px 24px;
-            margin-bottom: 20px;
+            padding: 16px 20px;
+            margin-bottom: 16px;
         }
         .legend-title {
-            font-size: 13px;
+            font-size: 11px;
             font-weight: 600;
-            color: var(--text-muted);
+            color: var(--text-dim);
             text-transform: uppercase;
-            letter-spacing: 0.06em;
-            margin-bottom: 14px;
+            letter-spacing: 0.07em;
+            margin-bottom: 12px;
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 6px;
         }
-        .legend-grid {
+        .legend-groups {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 10px 24px;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px 28px;
         }
-        .legend-item {
-            display: flex;
-            align-items: flex-start;
-            gap: 10px;
-            font-size: 13px;
+        .legend-group-title {
+            font-size: 12px;
+            font-weight: 600;
             color: var(--text-muted);
+            margin-bottom: 8px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid var(--border);
         }
-        .legend-item .badge {
+        .legend-rows {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .legend-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 12.5px;
+            color: var(--text-muted);
+            line-height: 1.35;
+        }
+        .legend-row .badge {
             flex-shrink: 0;
-            margin-top: 1px;
+            min-width: 148px;
+            text-align: center;
+        }
+        @media (max-width: 780px) {
+            .legend-groups { grid-template-columns: 1fr; }
+            .legend-row .badge { min-width: 130px; }
         }
 
         /* Badges */
@@ -617,7 +634,7 @@ HTML_TEMPLATE = """
             display: inline-block;
             padding: 3px 10px;
             border-radius: 20px;
-            font-size: 12px;
+            font-size: 11.5px;
             font-weight: 600;
             letter-spacing: 0.01em;
             white-space: nowrap;
@@ -664,9 +681,7 @@ HTML_TEMPLATE = """
             vertical-align: middle;
             white-space: nowrap;
         }
-        tbody tr {
-            transition: background 0.15s;
-        }
+        tbody tr { transition: background 0.15s; }
         tbody tr:hover { background: rgba(59, 130, 246, 0.04); }
         tbody tr:last-child td { border-bottom: none; }
 
@@ -757,7 +772,7 @@ HTML_TEMPLATE = """
         /* Footer */
         .footer {
             text-align: center;
-            margin-top: 40px;
+            margin-top: 36px;
             font-size: 13px;
             color: var(--text-dim);
         }
@@ -777,7 +792,6 @@ HTML_TEMPLATE = """
         @media (max-width: 640px) {
             .container { padding: 20px 14px 40px; }
             .delay-box { margin-left: 0; width: 100%; }
-            .legend-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -810,43 +824,61 @@ HTML_TEMPLATE = """
             <div class="progress" id="progressText">Sẵn sàng kiểm tra</div>
         </div>
 
-        <!-- Legend - luôn hiện -->
+        <!-- Legend - gọn, phân loại rõ -->
         <div class="legend">
-            <div class="legend-title">
-                <span>◈</span> Chú thích trạng thái domain
-            </div>
-            <div class="legend-grid">
-                <div class="legend-item">
-                    <span class="badge badge-success">Active / Không bị lock</span>
-                    <span>Domain hoạt động bình thường, không bị khóa.</span>
+            <div class="legend-title">◈ Chú thích trạng thái</div>
+            <div class="legend-groups">
+                <!-- Nhóm Domain -->
+                <div>
+                    <div class="legend-group-title">Trạng thái Domain</div>
+                    <div class="legend-rows">
+                        <div class="legend-row">
+                            <span class="badge badge-success">Active / Không bị lock</span>
+                            <span>Hoạt động bình thường</span>
+                        </div>
+                        <div class="legend-row">
+                            <span class="badge badge-danger">serverHold / clientHold</span>
+                            <span>Bị tạm giữ · không resolve DNS</span>
+                        </div>
+                        <div class="legend-row">
+                            <span class="badge badge-warning">Khóa Transfer</span>
+                            <span>Không chuyển registrar được</span>
+                        </div>
+                        <div class="legend-row">
+                            <span class="badge badge-orange">Đang chuyển Registrar</span>
+                            <span>Đang trong quá trình transfer</span>
+                        </div>
+                        <div class="legend-row">
+                            <span class="badge badge-muted">Khóa Update / Delete</span>
+                            <span>Không sửa WHOIS / xóa được</span>
+                        </div>
+                        <div class="legend-row">
+                            <span class="badge badge-danger">Redemption / Pending Delete</span>
+                            <span>Sắp xóa hoặc đang chuộc</span>
+                        </div>
+                    </div>
                 </div>
-                <div class="legend-item">
-                    <span class="badge badge-danger">serverHold / clientHold</span>
-                    <span>Domain bị tạm giữ, không resolve DNS được.</span>
-                </div>
-                <div class="legend-item">
-                    <span class="badge badge-warning">Khóa Transfer</span>
-                    <span>Không thể chuyển nhà đăng ký (client/server).</span>
-                </div>
-                <div class="legend-item">
-                    <span class="badge badge-orange">Đang chuyển Registrar</span>
-                    <span>Domain đang trong quá trình transfer.</span>
-                </div>
-                <div class="legend-item">
-                    <span class="badge badge-muted">Khóa Update / Delete</span>
-                    <span>Không thể cập nhật WHOIS hoặc xóa domain.</span>
-                </div>
-                <div class="legend-item">
-                    <span class="badge badge-danger">Redemption / Pending Delete</span>
-                    <span>Domain sắp bị xóa hoặc đang trong thời gian chuộc.</span>
-                </div>
-                <div class="legend-item">
-                    <span class="badge badge-success">Sạch (CF)</span>
-                    <span>Có thể add vào Cloudflare bình thường.</span>
-                </div>
-                <div class="legend-item">
-                    <span class="badge badge-danger">BANNED (CF)</span>
-                    <span>Domain bị Cloudflare cấm thêm vào account.</span>
+                <!-- Nhóm Cloudflare -->
+                <div>
+                    <div class="legend-group-title">Trạng thái Cloudflare</div>
+                    <div class="legend-rows">
+                        <div class="legend-row">
+                            <span class="badge badge-success">Sạch (CF)</span>
+                            <span>Có thể add vào Cloudflare</span>
+                        </div>
+                        <div class="legend-row">
+                            <span class="badge badge-danger">BANNED (CF)</span>
+                            <span>Bị Cloudflare cấm thêm</span>
+                        </div>
+                        <div class="legend-row">
+                            <span class="badge badge-info">Sạch (Chưa ĐK)</span>
+                            <span>Chưa đăng ký · nên mua</span>
+                        </div>
+                        <div class="legend-row">
+                            <span class="badge badge-warning">Đuôi TLD bị CF cấm</span>
+                            <span>TLD không được CF hỗ trợ</span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

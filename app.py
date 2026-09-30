@@ -810,7 +810,7 @@ HTML_TEMPLATE = """
 
         <!-- Input -->
         <div class="card">
-            <textarea id="domainList" placeholder="Nhập domain (mỗi dòng 1 domain)&#10;google.com&#10;example.org"></textarea>
+            <textarea id="domainList" placeholder="Nhập domain (mỗi dòng 1 domain). Hỗ trợ dán kèm giá tiền / ký tự lạ — hệ thống tự lọc.&#10;google.com&#10;tk88b.net    14,99 USD&#10;fifasmx.com  12,99 USD"></textarea>
             <div class="action-bar">
                 <button id="btnCheck" class="btn-primary" onclick="startCheck(false)">▶ Bắt đầu kiểm tra</button>
                 <button id="btnRetry" class="btn-warning" onclick="startCheck(true)" disabled>↻ Retry lỗi</button>
@@ -1000,9 +1000,24 @@ HTML_TEMPLATE = """
                 domains = [...failedDomains];
                 if (!domains.length) { alert("Không có domain lỗi để retry!"); return; }
             } else {
-                const text = document.getElementById('domainList').value;
-                domains = text.split('\\n').map(d => d.trim().toLowerCase()).filter(d => d);
-                if (!domains.length) { alert("Vui lòng nhập ít nhất 1 domain!"); return; }
+                                                const text = document.getElementById('domainList').value;
+                // Tự động chỉ lấy domain, bỏ giá tiền / ký tự lạ / tab
+                const domainRegex = /(?:https?:\\/\\/)?(?:www\\.)?([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)/i;
+                domains = text.replace(/\\r/g, "").split("\\n")
+                    .map(line => {
+                        const cleaned = line.trim().toLowerCase();
+                        if (!cleaned) return null;
+                        const firstToken = cleaned.split(/[\\s\\t,;|]+/)[0];
+                        if (domainRegex.test(firstToken) && firstToken.includes(".")) {
+                            const m = firstToken.match(domainRegex);
+                            return m ? m[1] : null;
+                        }
+                        const m = cleaned.match(domainRegex);
+                        return m ? m[1] : null;
+                    })
+                    .filter(d => d && d.includes(".") && d.length > 3);
+                domains = [...new Set(domains)];
+                if (!domains.length) { alert("Vui lòng nhập ít nhất 1 domain hợp lệ!"); return; }
                 failedDomains = [];
             }
 

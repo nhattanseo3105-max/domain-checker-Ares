@@ -7,7 +7,7 @@ import whois
 app = Flask(__name__)
 
 # ==========================================
-# CẤU HÌNH CLOUDFLARE API (Cần điền)
+# CẤU HÌNH CLOUDFLARE API
 # ==========================================
 CF_API_TOKEN = os.environ.get("CF_API_TOKEN", "")
 CF_ACCOUNT_ID = os.environ.get("CF_ACCOUNT_ID", "")
@@ -15,7 +15,6 @@ CF_ACCOUNT_ID = os.environ.get("CF_ACCOUNT_ID", "")
 # ==========================================
 # 1. CÁC HÀM KIỂM TRA & XỬ LÝ DỮ LIỆU
 # ==========================================
-
 def format_date_short(dt):
     """Chuyển datetime / ISO string → DD/MM/YY"""
     if not dt:
@@ -24,7 +23,6 @@ def format_date_short(dt):
         if isinstance(dt, list):
             dt = dt[0]
         if isinstance(dt, str):
-            # ISO: 1997-09-15T04:00:00Z hoặc 1997-09-15
             dt = dt.replace("Z", "+00:00").split("+")[0].split(".")[0]
             for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
                 try:
@@ -44,7 +42,7 @@ def format_date_short(dt):
 def check_cf_eligibility(domain):
     """Giả lập add domain vào CF để check xem có bị Banned không"""
     if not CF_API_TOKEN or not CF_ACCOUNT_ID:
-        return "<span style='color:gray'>Thiếu API CF</span>"
+        return "<span class='badge badge-muted'>Thiếu API CF</span>"
     url = "https://api.cloudflare.com/client/v4/zones"
     headers = {
         "Authorization": f"Bearer {CF_API_TOKEN}",
@@ -61,25 +59,25 @@ def check_cf_eligibility(domain):
         if r.status_code == 200 and resp.get("success"):
             zone_id = resp["result"]["id"]
             requests.delete(f"{url}/{zone_id}", headers=headers, timeout=5)
-            return "<span style='color:#28a745; font-weight:bold;'>Sạch</span>"
+            return "<span class='badge badge-success'>Sạch</span>"
         errors = resp.get("errors", [])
         if errors:
             err_code = errors[0].get("code")
             if err_code == 1049:
-                return "<span style='color:#007bff; font-weight:bold;'>Sạch (Chưa Đăng Ký) - Mua Tốt</span>"
+                return "<span class='badge badge-info'>Sạch (Chưa ĐK) - Mua Tốt</span>"
             elif err_code == 1097:
-                return "<span style='color:red; font-weight:bold;'>BANNED</span>"
+                return "<span class='badge badge-danger'>BANNED</span>"
             elif err_code == 1095:
-                return "<span style='color:red; font-weight:bold;'>Bị CF Chặn Add</span>"
+                return "<span class='badge badge-danger'>Bị CF Chặn Add</span>"
             elif err_code == 1116:
-                return "<span style='color:orange; font-weight:bold;'>Đuôi TLD bị CF cấm</span>"
+                return "<span class='badge badge-warning'>Đuôi TLD bị CF cấm</span>"
             elif err_code == 1061:
-                return "<span style='color:#28a745; font-weight:bold;'>Sạch (Đã nằm trong CF khác)</span>"
+                return "<span class='badge badge-success'>Sạch (Đã nằm trong CF khác)</span>"
             else:
-                return f"<span style='color:gray;'>Lỗi CF: {err_code}</span>"
-        return "<span style='color:gray;'>Không rõ trạng thái</span>"
+                return f"<span class='badge badge-muted'>Lỗi CF: {err_code}</span>"
+        return "<span class='badge badge-muted'>Không rõ trạng thái</span>"
     except Exception:
-        return "<span style='color:red;'>Lỗi Call API CF</span>"
+        return "<span class='badge badge-danger'>Lỗi Call API CF</span>"
 
 
 def get_nameservers(domain):
@@ -109,6 +107,30 @@ def get_nameservers(domain):
     return ns_list
 
 
+def _normalize_status(s):
+    """Chuẩn hóa 1 status string → key chuẩn"""
+    s = str(s).lower().replace(" ", "").replace("_", "").replace("-", "")
+    mapping = {
+        "serverhold": "serverHold",
+        "clienthold": "clientHold",
+        "clienttransferprohibited": "clientTransferProhibited",
+        "servertransferprohibited": "serverTransferProhibited",
+        "pendingtransfer": "pendingTransfer",
+        "clientupdateprohibited": "clientUpdateProhibited",
+        "serverupdateprohibited": "serverUpdateProhibited",
+        "clientdeleteprohibited": "clientDeleteProhibited",
+        "serverdeleteprohibited": "serverDeleteProhibited",
+        "redemptionperiod": "redemptionPeriod",
+        "pendingdelete": "pendingDelete",
+        "ok": "ok",
+        "active": "ok",
+    }
+    for k, v in mapping.items():
+        if k in s:
+            return v
+    return None
+
+
 def _parse_rdap_json(data):
     """Parse RDAP JSON → status set + registrar + dates"""
     status_found = set()
@@ -118,11 +140,9 @@ def _parse_rdap_json(data):
 
     statuses = data.get("status", [])
     for s in statuses:
-        s_lower = str(s).lower()
-        if "server hold" in s_lower or "serverhold" in s_lower or "server update prohibited" in s_lower:
-            status_found.add("serverHold")
-        if "client hold" in s_lower or "clienthold" in s_lower:
-            status_found.add("clientHold")
+        key = _normalize_status(s)
+        if key:
+            status_found.add(key)
 
     entities = data.get("entities", [])
     for ent in entities:
@@ -137,7 +157,6 @@ def _parse_rdap_json(data):
             if not registrar:
                 registrar = ent.get("handle") or ent.get("name")
 
-    # Events: registration / expiration
     events = data.get("events", [])
     for ev in events:
         action = str(ev.get("eventAction", "")).lower()
@@ -152,14 +171,52 @@ def _parse_rdap_json(data):
     return status_found, registrar, created, expires
 
 
+def format_status_display(status_set):
+    """Chuyển set status → HTML badge đẹp"""
+    if not status_set:
+        return "<span class='badge badge-success'>Active / Không bị lock</span>"
+
+    labels = {
+        "serverHold": ("serverHold", "badge-danger"),
+        "clientHold": ("clientHold", "badge-danger"),
+        "clientTransferProhibited": ("Khóa Transfer (Client)", "badge-warning"),
+        "serverTransferProhibited": ("Khóa Transfer (Server)", "badge-warning"),
+        "pendingTransfer": ("Đang chuyển Registrar", "badge-orange"),
+        "clientUpdateProhibited": ("Khóa Update", "badge-muted"),
+        "serverUpdateProhibited": ("Khóa Update (Server)", "badge-muted"),
+        "clientDeleteProhibited": ("Khóa Delete", "badge-muted"),
+        "serverDeleteProhibited": ("Khóa Delete (Server)", "badge-muted"),
+        "redemptionPeriod": ("Redemption Period", "badge-danger"),
+        "pendingDelete": ("Pending Delete", "badge-danger"),
+        "ok": ("Active", "badge-success"),
+    }
+
+    # Ưu tiên hiển thị các status quan trọng trước
+    priority = [
+        "serverHold", "clientHold", "pendingTransfer",
+        "redemptionPeriod", "pendingDelete",
+        "clientTransferProhibited", "serverTransferProhibited",
+        "clientUpdateProhibited", "serverUpdateProhibited",
+        "clientDeleteProhibited", "serverDeleteProhibited", "ok"
+    ]
+
+    badges = []
+    for key in priority:
+        if key in status_set:
+            text, cls = labels.get(key, (key, "badge-muted"))
+            badges.append(f"<span class='badge {cls}'>{text}</span>")
+
+    # Các status còn lại (nếu có)
+    for key in status_set:
+        if key not in priority:
+            badges.append(f"<span class='badge badge-muted'>{key}</span>")
+
+    return " ".join(badges) if badges else "<span class='badge badge-success'>Active / Không bị lock</span>"
+
+
 def get_domain_info(domain):
     """
-    Lấy status Hold + Registrar + ngày đăng ký / hết hạn.
-    Thứ tự ưu tiên:
-      1. RDAP qua rdap.org
-      2. who-dat.as93.net
-      3. rdap.cloud
-      4. python-whois (fallback cuối)
+    Lấy status (Hold + Transfer + Lock) + Registrar + ngày ĐK / hết hạn.
     """
     status_found = set()
     registrar = None
@@ -201,12 +258,9 @@ def get_domain_info(domain):
                 if isinstance(statuses, str):
                     statuses = [statuses]
                 for s in statuses:
-                    s_lower = str(s).lower()
-                    if "serverhold" in s_lower or "server hold" in s_lower:
-                        status_found.add("serverHold")
-                    if "clienthold" in s_lower or "client hold" in s_lower:
-                        status_found.add("clientHold")
-                # dates
+                    key = _normalize_status(s)
+                    if key:
+                        status_found.add(key)
                 for key_map in [
                     ("created", "creationDate", "creation_date", "registered"),
                     ("expires", "expirationDate", "expiration_date", "expiry"),
@@ -249,11 +303,9 @@ def get_domain_info(domain):
                 if isinstance(statuses, str):
                     statuses = [statuses]
                 for s in statuses:
-                    s_lower = str(s).lower()
-                    if "serverhold" in s_lower or "server hold" in s_lower:
-                        status_found.add("serverHold")
-                    if "clienthold" in s_lower or "client hold" in s_lower:
-                        status_found.add("clientHold")
+                    key = _normalize_status(s)
+                    if key:
+                        status_found.add(key)
                 for key_map in [
                     ("created", "creationDate", "creation_date", "registered"),
                     ("expires", "expirationDate", "expiration_date", "expiry"),
@@ -278,7 +330,7 @@ def get_domain_info(domain):
         except Exception:
             pass
 
-    # ---------- 4. python-whois (fallback cuối) ----------
+    # ---------- 4. python-whois (fallback) ----------
     if not is_registered or not registrar or not status_found or not created or not expires:
         try:
             w = whois.whois(domain)
@@ -289,11 +341,9 @@ def get_domain_info(domain):
                     raw_status = [raw_status]
                 if raw_status:
                     for s in raw_status:
-                        s_lower = str(s).lower()
-                        if "serverhold" in s_lower or "server hold" in s_lower:
-                            status_found.add("serverHold")
-                        if "clienthold" in s_lower or "client hold" in s_lower:
-                            status_found.add("clientHold")
+                        key = _normalize_status(s)
+                        if key:
+                            status_found.add(key)
                 if w.registrar and not registrar:
                     registrar = w.registrar
                 if not created and getattr(w, "creation_date", None):
@@ -306,13 +356,13 @@ def get_domain_info(domain):
     if not is_registered:
         return "Chưa đăng ký / Ẩn thông tin", "Không có dữ liệu", None, None
 
-    final_status = " | ".join(sorted(status_found)) if status_found else "Không bị hold"
+    final_status = format_status_display(status_found)
     final_registrar = registrar if registrar else "Không xác định"
     return final_status, final_registrar, created, expires
 
 
 # ==========================================
-# 2. GIAO DIỆN WEB & API ROUTER
+# 2. GIAO DIỆN WEB
 # ==========================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -320,97 +370,509 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Domain Checker - Ares</title>
-    <link rel="icon" type="image/png" href="https://cdn-icons-png.magnific.com/256/15435/15435750.png?semt=ais_white_label">
+    <title>Domain Checker — Ares</title>
+    <link rel="icon" type="image/png" href="https://cdn-icons-png.flaticon.com/512/15435/15435750.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f4f7f6; padding: 20px; color: #333; transition: 0.3s; }
-        .container { max-width: 1500px; margin: auto; background: #fff; padding: 25px; border-radius: 12px; box-shadow: 0 8px 16px rgba(0,0,0,0.08); }
-        textarea { width: 100%; height: 150px; padding: 12px; box-sizing: border-box; border: 1px solid #ced4da; border-radius: 6px; margin-bottom: 15px; font-family: monospace; transition: border-color 0.2s; }
-        textarea:focus { border-color: #007bff; outline: none; box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.25); }
-        .action-bar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 15px; align-items: center; }
-        button { border: none; padding: 10px 20px; font-size: 15px; border-radius: 6px; cursor: pointer; transition: all 0.2s ease-in-out; font-weight: 500; }
-        .btn-primary { background: #007bff; color: white; box-shadow: 0 4px 6px rgba(0, 123, 255, 0.2); }
-        .btn-primary:hover:not(:disabled) { background: #0056b3; transform: translateY(-1px); box-shadow: 0 6px 8px rgba(0, 123, 255, 0.3); }
-        .btn-secondary { background: #6c757d; color: white; }
-        .btn-secondary:hover { background: #5a6268; transform: translateY(-1px); }
-        .btn-warning { background: #fd7e14; color: white; }
-        .btn-warning:hover:not(:disabled) { background: #e8590c; transform: translateY(-1px); }
-        button:disabled { background: #cccccc; cursor: not-allowed; transform: none; box-shadow: none; }
-        .delay-box { display: flex; align-items: center; gap: 6px; margin-left: 8px; }
-        .delay-box label { font-size: 14px; color: #555; white-space: nowrap; }
-        .delay-box input { width: 90px; padding: 8px 10px; border: 1px solid #ced4da; border-radius: 6px; font-size: 14px; }
-        .progress { margin-top: 10px; font-size: 14px; color: #555; font-weight: 500; }
-        .table-wrapper { overflow-x: auto; margin-top: 20px; border-radius: 8px; box-shadow: 0 0 0 1px #dee2e6; }
-        table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 900px; background: #fff; }
-        th, td { border-bottom: 1px solid #dee2e6; padding: 12px 15px; text-align: left; vertical-align: middle; white-space: nowrap; }
-        th { background-color: #f8f9fa; font-weight: 600; color: #495057; border-bottom: 2px solid #dee2e6; }
-        tbody tr { transition: background-color 0.2s ease; }
-        tbody tr:hover { background-color: #f1f8ff; }
-        .hold { color: #dc3545; font-weight: bold; }
-        .ok { color: #28a745; font-weight: bold; }
-        .badge-cf-yes { background: #f6821f; color: white; padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; display: inline-block; box-shadow: 0 2px 4px rgba(246, 130, 31, 0.3); }
-        .badge-cf-no { background: #6c757d; color: white; padding: 5px 12px; border-radius: 20px; font-size: 12px; display: inline-block; }
-        .skipped { color: #adb5bd; font-style: italic; }
-        .error-cell { color: #dc3545; }
-        .date-cell { font-family: monospace; font-size: 13px; }
-        /* Modal */
-        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); backdrop-filter: blur(4px); opacity: 0; transition: opacity 0.3s ease; }
-        .modal.show { display: flex; align-items: center; justify-content: center; opacity: 1; }
-        .modal-content { background-color: #fff; padding: 25px; border-radius: 12px; width: 420px; max-width: 95vw; box-shadow: 0 10px 25px rgba(0,0,0,0.2); transform: translateY(-20px); transition: transform 0.3s ease; }
-        .modal.show .modal-content { transform: translateY(0); }
-        .close-btn { color: #aaa; float: right; font-size: 24px; font-weight: bold; cursor: pointer; line-height: 1; margin-top: -5px; transition: color 0.2s; }
-        .close-btn:hover { color: #333; }
-        .settings-item { margin: 12px 0; display: flex; align-items: center; cursor: pointer; }
-        .settings-item input { margin-right: 10px; width: 16px; height: 16px; cursor: pointer; }
-        .settings-item label { cursor: pointer; font-size: 15px; user-select: none; }
-        .footer { text-align: center; margin-top: 40px; font-weight: 800; font-size: 18px; letter-spacing: 1px; }
-        .gradient-text {
-            background: linear-gradient(270deg, #ff007f, #007bff, #00d2ff, #ff007f);
-            background-size: 400% 400%;
+        :root {
+            --bg: #0b0f19;
+            --bg-card: #111827;
+            --bg-elevated: #1a2234;
+            --border: #1e293b;
+            --border-light: #334155;
+            --text: #e2e8f0;
+            --text-muted: #94a3b8;
+            --text-dim: #64748b;
+            --primary: #3b82f6;
+            --primary-hover: #2563eb;
+            --success: #22c55e;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --orange: #f97316;
+            --info: #06b6d4;
+            --accent: #8b5cf6;
+            --radius: 12px;
+            --radius-sm: 8px;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            line-height: 1.5;
+            background-image:
+                radial-gradient(ellipse 80% 50% at 50% -20%, rgba(59, 130, 246, 0.15), transparent),
+                radial-gradient(ellipse 60% 40% at 100% 100%, rgba(139, 92, 246, 0.08), transparent);
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 32px 24px 60px;
+        }
+
+        /* Header */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 32px;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+        .logo-icon {
+            width: 44px;
+            height: 44px;
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            box-shadow: 0 0 24px rgba(59, 130, 246, 0.35);
+        }
+        .logo h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            background: linear-gradient(90deg, #e2e8f0, #94a3b8);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            animation: gradientShift 4s ease infinite;
         }
-        @keyframes gradientShift {
-            0% { background-position: 0% 50% }
-            50% { background-position: 100% 50% }
-            100% { background-position: 0% 50% }
+        .logo p {
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            margin-top: 2px;
+        }
+
+        /* Input Card */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 24px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.25);
+        }
+
+        textarea {
+            width: 100%;
+            height: 130px;
+            padding: 14px 16px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            color: var(--text);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13.5px;
+            resize: vertical;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+        }
+        textarea::placeholder { color: var(--text-dim); }
+
+        .action-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 16px;
+            align-items: center;
+        }
+
+        button {
+            border: none;
+            padding: 10px 18px;
+            font-size: 14px;
+            font-weight: 600;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: inherit;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            color: white;
+            box-shadow: 0 2px 12px rgba(59, 130, 246, 0.35);
+        }
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px rgba(59, 130, 246, 0.45);
+        }
+        .btn-secondary {
+            background: var(--bg-elevated);
+            color: var(--text);
+            border: 1px solid var(--border-light);
+        }
+        .btn-secondary:hover { background: #243044; }
+        .btn-warning {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            color: #111;
+        }
+        .btn-warning:hover:not(:disabled) { transform: translateY(-1px); }
+        button:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+
+        .delay-box {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-left: auto;
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+        .delay-box input {
+            width: 80px;
+            padding: 8px 10px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 13px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .delay-box input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .progress {
+            margin-top: 14px;
+            font-size: 13.5px;
+            color: var(--text-muted);
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .progress-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--primary);
+            animation: pulse 1.4s ease infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.85); }
+        }
+
+        /* Legend / Note */
+        .legend {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px 24px;
+            margin-bottom: 20px;
+        }
+        .legend-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin-bottom: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .legend-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 10px 24px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+        .legend-item .badge {
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
+
+        /* Badges */
+        .badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.01em;
+            white-space: nowrap;
+        }
+        .badge-success { background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.25); }
+        .badge-danger  { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.25); }
+        .badge-warning { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.25); }
+        .badge-orange  { background: rgba(249, 115, 22, 0.15); color: #fb923c; border: 1px solid rgba(249, 115, 22, 0.25); }
+        .badge-info    { background: rgba(6, 182, 212, 0.15); color: #22d3ee; border: 1px solid rgba(6, 182, 212, 0.25); }
+        .badge-muted   { background: rgba(100, 116, 139, 0.15); color: #94a3b8; border: 1px solid rgba(100, 116, 139, 0.25); }
+        .badge-cf-yes  { background: rgba(246, 130, 31, 0.2); color: #fb923c; border: 1px solid rgba(246, 130, 31, 0.3); }
+        .badge-cf-no   { background: rgba(100, 116, 139, 0.15); color: #94a3b8; border: 1px solid rgba(100, 116, 139, 0.25); }
+
+        /* Table */
+        .table-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.25);
+        }
+        .table-wrapper { overflow-x: auto; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13.5px;
+            min-width: 900px;
+        }
+        th {
+            background: var(--bg-elevated);
+            color: var(--text-muted);
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            padding: 14px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+            white-space: nowrap;
+        }
+        td {
+            padding: 13px 16px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+            white-space: nowrap;
+        }
+        tbody tr {
+            transition: background 0.15s;
+        }
+        tbody tr:hover { background: rgba(59, 130, 246, 0.04); }
+        tbody tr:last-child td { border-bottom: none; }
+
+        .domain-cell {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 500;
+            font-size: 13px;
+            color: #93c5fd;
+        }
+        .date-cell {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12.5px;
+            color: var(--text-muted);
+        }
+        .ns-cell {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--text-dim);
+            max-width: 280px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .skipped { color: var(--text-dim); font-style: italic; font-size: 12.5px; }
+        .error-cell { color: #f87171; }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            inset: 0;
+            background: rgba(0,0,0,0.6);
+            backdrop-filter: blur(6px);
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.25s;
+        }
+        .modal.show {
+            display: flex;
+            opacity: 1;
+        }
+        .modal-content {
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            padding: 28px;
+            border-radius: 16px;
+            width: 400px;
+            max-width: 95vw;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+            transform: translateY(12px);
+            transition: transform 0.25s;
+        }
+        .modal.show .modal-content { transform: translateY(0); }
+        .modal-content h3 {
+            font-size: 1.1rem;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .close-btn {
+            float: right;
+            font-size: 22px;
+            color: var(--text-dim);
+            cursor: pointer;
+            line-height: 1;
+            margin-top: -4px;
+            transition: color 0.15s;
+        }
+        .close-btn:hover { color: var(--text); }
+        .settings-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 0;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .settings-item input {
+            width: 17px;
+            height: 17px;
+            accent-color: var(--primary);
+            cursor: pointer;
+        }
+        .settings-item label { cursor: pointer; user-select: none; }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            font-size: 13px;
+            color: var(--text-dim);
+        }
+        .footer span {
+            background: linear-gradient(90deg, #3b82f6, #8b5cf6, #06b6d4, #3b82f6);
+            background-size: 300% 100%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 700;
+            animation: gradientMove 5s linear infinite;
+        }
+        @keyframes gradientMove {
+            0% { background-position: 0% 50%; }
+            100% { background-position: 300% 50%; }
+        }
+
+        @media (max-width: 640px) {
+            .container { padding: 20px 14px 40px; }
+            .delay-box { margin-left: 0; width: 100%; }
+            .legend-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h2>Domain Checker - Ares</h2>
-        <p style="color: #6c757d; margin-bottom: 20px;">Hỗ trợ kiểm tra hàng loạt trạng thái Hold, Nhà đăng ký, ngày đăng ký/hết hạn và danh sách đen của Cloudflare.</p>
-        <textarea id="domainList" placeholder="Nhập domain vào đây (mỗi domain 1 dòng)...&#10;google.com&#10;dantri.com.vn"></textarea>
-        <div class="action-bar">
-            <button id="btnCheck" class="btn-primary" onclick="startCheck(false)">🚀 Bắt đầu kiểm tra</button>
-            <button id="btnRetry" class="btn-warning" onclick="startCheck(true)" disabled>🔄 Retry domain lỗi</button>
-            <button class="btn-secondary" onclick="openSettings()">⚙️ Cài đặt check</button>
-            <div class="delay-box">
-                <label for="delayMs">Delay (ms):</label>
-                <input type="number" id="delayMs" value="500" min="0" step="100" title="Thời gian chờ giữa mỗi domain (milliseconds)">
+        <!-- Header -->
+        <div class="header">
+            <div class="logo">
+                <div class="logo-icon">◈</div>
+                <div>
+                    <h1>Domain Checker</h1>
+                    <p>Ares · Domain Intelligence</p>
+                </div>
             </div>
         </div>
-        <div class="progress" id="progressText">Sẵn sàng.</div>
-        <div class="table-wrapper">
-            <table>
-                <thead>
-                    <tr id="tableHeader">
-                        <!-- Header được build động bằng JS -->
-                    </tr>
-                </thead>
-                <tbody id="resultBody">
-                </tbody>
-            </table>
+
+        <!-- Input -->
+        <div class="card">
+            <textarea id="domainList" placeholder="Nhập domain (mỗi dòng 1 domain)&#10;google.com&#10;example.org"></textarea>
+            <div class="action-bar">
+                <button id="btnCheck" class="btn-primary" onclick="startCheck(false)">▶ Bắt đầu kiểm tra</button>
+                <button id="btnRetry" class="btn-warning" onclick="startCheck(true)" disabled>↻ Retry lỗi</button>
+                <button class="btn-secondary" onclick="openSettings()">⚙ Cài đặt</button>
+                <div class="delay-box">
+                    <label for="delayMs">Delay</label>
+                    <input type="number" id="delayMs" value="500" min="0" step="100" title="ms giữa mỗi domain">
+                    <span>ms</span>
+                </div>
+            </div>
+            <div class="progress" id="progressText">Sẵn sàng kiểm tra</div>
         </div>
-        <div class="footer"><span class="gradient-text">DEV by Ares</span></div>
+
+        <!-- Legend - luôn hiện -->
+        <div class="legend">
+            <div class="legend-title">
+                <span>◈</span> Chú thích trạng thái domain
+            </div>
+            <div class="legend-grid">
+                <div class="legend-item">
+                    <span class="badge badge-success">Active / Không bị lock</span>
+                    <span>Domain hoạt động bình thường, không bị khóa.</span>
+                </div>
+                <div class="legend-item">
+                    <span class="badge badge-danger">serverHold / clientHold</span>
+                    <span>Domain bị tạm giữ, không resolve DNS được.</span>
+                </div>
+                <div class="legend-item">
+                    <span class="badge badge-warning">Khóa Transfer</span>
+                    <span>Không thể chuyển nhà đăng ký (client/server).</span>
+                </div>
+                <div class="legend-item">
+                    <span class="badge badge-orange">Đang chuyển Registrar</span>
+                    <span>Domain đang trong quá trình transfer.</span>
+                </div>
+                <div class="legend-item">
+                    <span class="badge badge-muted">Khóa Update / Delete</span>
+                    <span>Không thể cập nhật WHOIS hoặc xóa domain.</span>
+                </div>
+                <div class="legend-item">
+                    <span class="badge badge-danger">Redemption / Pending Delete</span>
+                    <span>Domain sắp bị xóa hoặc đang trong thời gian chuộc.</span>
+                </div>
+                <div class="legend-item">
+                    <span class="badge badge-success">Sạch (CF)</span>
+                    <span>Có thể add vào Cloudflare bình thường.</span>
+                </div>
+                <div class="legend-item">
+                    <span class="badge badge-danger">BANNED (CF)</span>
+                    <span>Domain bị Cloudflare cấm thêm vào account.</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Table -->
+        <div class="table-card">
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr id="tableHeader"></tr>
+                    </thead>
+                    <tbody id="resultBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="footer">
+            DEV by <span>Ares</span>
+        </div>
     </div>
-    <!-- Modal Cài Đặt -->
+
+    <!-- Settings Modal -->
     <div id="settingsModal" class="modal">
         <div class="modal-content">
             <span class="close-btn" onclick="closeSettings()">&times;</span>
-            <h3 style="margin-top: 0; color: #333;">⚙️ Cài đặt kiểm tra</h3>
+            <h3>⚙ Cài đặt kiểm tra</h3>
             <div class="settings-item">
                 <input type="checkbox" id="chk_cf">
                 <label for="chk_cf">Trạng thái CF (Có thể Add CF)</label>
@@ -421,7 +883,7 @@ HTML_TEMPLATE = """
             </div>
             <div class="settings-item">
                 <input type="checkbox" id="chk_hold" checked>
-                <label for="chk_hold">Trạng thái Hold</label>
+                <label for="chk_hold">Trạng thái Hold / Lock / Transfer</label>
             </div>
             <div class="settings-item">
                 <input type="checkbox" id="chk_dates" checked>
@@ -431,16 +893,15 @@ HTML_TEMPLATE = """
                 <input type="checkbox" id="chk_ns" checked>
                 <label for="chk_ns">Nameserver & Cloudflare NS</label>
             </div>
-            <button class="btn-primary" style="margin-top: 20px; width: 100%;" onclick="closeSettings()">Lưu cài đặt</button>
+            <button class="btn-primary" style="margin-top: 22px; width: 100%; justify-content: center;" onclick="closeSettings()">Lưu cài đặt</button>
         </div>
     </div>
+
     <script>
         const modal = document.getElementById("settingsModal");
         function openSettings() { modal.classList.add("show"); }
         function closeSettings() { modal.classList.remove("show"); }
-        window.onclick = function(event) {
-            if (event.target == modal) closeSettings();
-        }
+        window.onclick = function(e) { if (e.target === modal) closeSettings(); };
 
         let failedDomains = [];
 
@@ -456,28 +917,20 @@ HTML_TEMPLATE = """
 
         function buildHeader(options) {
             const tr = document.getElementById('tableHeader');
-            let html = '<th width="14%">Domain</th>';
-            if (options.check_cf) {
-                html += '<th width="14%">Trạng thái CF</th>';
-            }
-            if (options.check_registrar) {
-                html += '<th width="16%">Nhà đăng ký (Registrar)</th>';
-            }
-            if (options.check_hold) {
-                html += '<th width="12%">Trạng thái Hold</th>';
-            }
-            if (options.check_dates) {
-                html += '<th width="14%">Ngày ĐK / Hết hạn</th>';
-            }
+            let html = '<th>Domain</th>';
+            if (options.check_cf) html += '<th>Trạng thái CF</th>';
+            if (options.check_registrar) html += '<th>Nhà đăng ký</th>';
+            if (options.check_hold) html += '<th>Trạng thái Domain</th>';
+            if (options.check_dates) html += '<th>Ngày ĐK → Hết hạn</th>';
             if (options.check_ns) {
-                html += '<th width="10%">Cloudflare NS</th>';
-                html += '<th width="20%">Nameservers Hiện tại</th>';
+                html += '<th>CF NS</th>';
+                html += '<th>Nameservers</th>';
             }
             tr.innerHTML = html;
         }
 
         function countVisibleCols(options) {
-            let n = 1; // domain
+            let n = 1;
             if (options.check_cf) n++;
             if (options.check_registrar) n++;
             if (options.check_hold) n++;
@@ -501,7 +954,7 @@ HTML_TEMPLATE = """
         }
 
         async function sleep(ms) {
-            return new Promise(resolve => setTimeout(resolve, ms));
+            return new Promise(r => setTimeout(r, ms));
         }
 
         async function startCheck(isRetry = false) {
@@ -513,25 +966,17 @@ HTML_TEMPLATE = """
             let domains = [];
             if (isRetry) {
                 domains = [...failedDomains];
-                if (domains.length === 0) {
-                    alert("Không có domain lỗi để retry!");
-                    return;
-                }
+                if (!domains.length) { alert("Không có domain lỗi để retry!"); return; }
             } else {
                 const text = document.getElementById('domainList').value;
                 domains = text.split('\\n').map(d => d.trim().toLowerCase()).filter(d => d);
-                if (domains.length === 0) {
-                    alert("Vui lòng nhập ít nhất 1 domain!");
-                    return;
-                }
+                if (!domains.length) { alert("Vui lòng nhập ít nhất 1 domain!"); return; }
                 failedDomains = [];
             }
 
             buildHeader(options);
             const tbody = document.getElementById('resultBody');
-            if (!isRetry) {
-                tbody.innerHTML = '';
-            }
+            if (!isRetry) tbody.innerHTML = '';
 
             btn.disabled = true;
             btnRetry.disabled = true;
@@ -540,8 +985,9 @@ HTML_TEMPLATE = """
             const total = domains.length;
             const colspan = countVisibleCols(options) - 1;
 
-            for (let domain of domains) {
-                document.getElementById('progressText').innerText = `⏳ Đang xử lý: ${completed + 1}/${total} — ${domain}`;
+            for (const domain of domains) {
+                document.getElementById('progressText').innerHTML =
+                    `<span class="progress-dot"></span> Đang xử lý ${completed + 1}/${total} — <b style="color:#93c5fd">${domain}</b>`;
 
                 let row = document.getElementById(`row-${domain}`);
                 if (!row) {
@@ -549,69 +995,55 @@ HTML_TEMPLATE = """
                     row.id = `row-${domain}`;
                     tbody.appendChild(row);
                 }
-                row.innerHTML = `<td><b>${domain}</b></td><td colspan="${colspan}" style="color:#6c757d; font-style:italic;">Đang quét dữ liệu...</td>`;
+                row.innerHTML = `<td class="domain-cell">${domain}</td><td colspan="${colspan}" class="skipped">Đang quét dữ liệu…</td>`;
 
                 try {
                     const response = await fetch('/api/check', {
                         method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({domain: domain, options: options})
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ domain, options })
                     });
-                    if (!response.ok) throw new Error("Lỗi Server");
+                    if (!response.ok) throw new Error("Server error");
                     const data = await response.json();
-
-                    // Status Hold
-                    let statusClass = "ok";
-                    if ((data.status || "").includes('Hold') || (data.status || "").includes('Chưa đăng ký')) statusClass = 'hold';
 
                     // NS
                     let nsText = "";
                     if (data.ns === "Bỏ qua") {
                         nsText = '<span class="skipped">Bỏ qua</span>';
-                    } else if (Array.isArray(data.ns) && data.ns.length > 0) {
-                        nsText = data.ns.join(', ');
+                    } else if (Array.isArray(data.ns) && data.ns.length) {
+                        nsText = `<span class="ns-cell" title="${data.ns.join(', ')}">${data.ns.join(', ')}</span>`;
                     } else {
-                        nsText = '<span style="color:red; font-weight:bold;">Không có NS</span>';
+                        nsText = '<span class="error-cell">Không có NS</span>';
                     }
 
-                    // Cloudflare Badge
+                    // CF Badge
                     let cfBadge = '<span class="skipped">Bỏ qua</span>';
                     if (data.is_cloudflare !== "Bỏ qua") {
                         cfBadge = data.is_cloudflare
-                            ? '<span class="badge-cf-yes">Đang dùng</span>'
-                            : '<span class="badge-cf-no">Không dùng</span>';
+                            ? '<span class="badge badge-cf-yes">Đang dùng</span>'
+                            : '<span class="badge badge-cf-no">Không dùng</span>';
                     }
 
                     // Registrar
-                    let registrarText = data.registrar;
-                    if (registrarText === "Không có dữ liệu" || registrarText === "Không xác định" || registrarText === "Bỏ qua") {
+                    let registrarText = data.registrar || "";
+                    if (["Không có dữ liệu", "Không xác định", "Bỏ qua"].includes(registrarText)) {
                         registrarText = `<span class="error-cell">${registrarText}</span>`;
                     }
 
                     // Dates
                     let datesText = "—";
                     if (data.created || data.expires) {
-                        const cr = data.created || "—";
-                        const exp = data.expires || "—";
-                        datesText = `<span class="date-cell">${cr} → ${exp}</span>`;
-                    } else if (data.status && data.status.includes("Chưa đăng ký")) {
+                        datesText = `<span class="date-cell">${data.created || "—"} → ${data.expires || "—"}</span>`;
+                    } else if ((data.status || "").includes("Chưa đăng ký")) {
                         datesText = '<span class="skipped">Chưa ĐK</span>';
                     }
 
-                    // Build cells
-                    let cells = `<td><b>${domain}</b></td>`;
-                    if (options.check_cf) {
-                        cells += `<td>${data.cf_add_status || ""}</td>`;
-                    }
-                    if (options.check_registrar) {
-                        cells += `<td>${registrarText}</td>`;
-                    }
-                    if (options.check_hold) {
-                        cells += `<td class="${statusClass}">${data.status || ""}</td>`;
-                    }
-                    if (options.check_dates) {
-                        cells += `<td>${datesText}</td>`;
-                    }
+                    // Build row
+                    let cells = `<td class="domain-cell">${domain}</td>`;
+                    if (options.check_cf) cells += `<td>${data.cf_add_status || ""}</td>`;
+                    if (options.check_registrar) cells += `<td>${registrarText}</td>`;
+                    if (options.check_hold) cells += `<td>${data.status || ""}</td>`;
+                    if (options.check_dates) cells += `<td>${datesText}</td>`;
                     if (options.check_ns) {
                         cells += `<td>${cfBadge}</td>`;
                         cells += `<td>${nsText}</td>`;
@@ -619,29 +1051,24 @@ HTML_TEMPLATE = """
                     row.innerHTML = cells;
 
                     if (isFailedResult(data, options)) {
-                        if (!failedDomains.includes(domain)) {
-                            failedDomains.push(domain);
-                        }
+                        if (!failedDomains.includes(domain)) failedDomains.push(domain);
                     } else {
                         failedDomains = failedDomains.filter(d => d !== domain);
                     }
                 } catch (e) {
                     row.innerHTML = `
-                        <td><b>${domain}</b></td>
-                        <td colspan="${colspan}" style="color:red;">Lỗi quá tải / network, thử lại sau</td>
-                    `;
-                    if (!failedDomains.includes(domain)) {
-                        failedDomains.push(domain);
-                    }
+                        <td class="domain-cell">${domain}</td>
+                        <td colspan="${colspan}" class="error-cell">Lỗi network / quá tải — thử lại sau</td>`;
+                    if (!failedDomains.includes(domain)) failedDomains.push(domain);
                 }
 
                 completed++;
-                if (completed < total && delay > 0) {
-                    await sleep(delay);
-                }
+                if (completed < total && delay > 0) await sleep(delay);
             }
 
-            document.getElementById('progressText').innerText = `✅ Hoàn thành ${completed}/${total} domain! (Lỗi còn lại: ${failedDomains.length})`;
+            document.getElementById('progressText').innerHTML =
+                `✓ Hoàn thành ${completed}/${total} domain` +
+                (failedDomains.length ? ` · <span style="color:#f87171">${failedDomains.length} lỗi</span>` : '');
             btn.disabled = false;
             btnRetry.disabled = failedDomains.length === 0;
         }
@@ -679,17 +1106,14 @@ def api_check():
             or options.get('check_dates', True)
         )
 
-        # 1. Nameserver
         if options.get('check_ns', True):
             ns_list = get_nameservers(domain)
             is_cloudflare = False
             if ns_list:
                 is_cloudflare = any('cloudflare.com' in ns.lower() for ns in ns_list)
 
-        # 2. WHOIS / Hold + Registrar + Dates (một lần gọi nếu cần bất kỳ cái nào)
         if need_whois:
             status, registrar, created, expires = get_domain_info(domain)
-            # Ẩn phần không tick
             if not options.get('check_registrar', True):
                 registrar = "Bỏ qua"
             if not options.get('check_hold', True):
@@ -698,7 +1122,6 @@ def api_check():
                 created = None
                 expires = None
 
-        # 3. CF eligibility
         if options.get('check_cf', False):
             cf_add_status = check_cf_eligibility(domain)
 

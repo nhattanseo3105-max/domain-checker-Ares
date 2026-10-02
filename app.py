@@ -201,12 +201,14 @@ def format_status_display(status_set):
 def get_domain_info(domain):
     """
     Lấy status (Hold + Transfer + Lock) + Registrar + ngày ĐK / hết hạn.
+    Phát hiện domain bị Registry Policy cấm đăng ký.
     """
     status_found = set()
     registrar = None
     created = None
     expires = None
     is_registered = False
+    is_restricted = False  # Domain bị registry policy cấm đăng ký
 
     # ---------- 1. rdap.org ----------
     try:
@@ -222,16 +224,38 @@ def get_domain_info(domain):
                 created = cr
             if exp:
                 expires = exp
+        elif r.status_code == 404:
+            # Kiểm tra domain bị restricted by Registry Policy
+            try:
+                data = r.json()
+                desc = data.get("description") or []
+                if isinstance(desc, list):
+                    desc_text = " ".join(str(d) for d in desc).lower()
+                else:
+                    desc_text = str(desc).lower()
+                title = str(data.get("title", "")).lower()
+                full_text = desc_text + " " + title
+                if (
+                    "not available for registration" in full_text
+                    or "restricted by registry policy" in full_text
+                    or "registry policy" in full_text
+                    or "prohibited" in full_text
+                ):
+                    is_restricted = True
+            except Exception:
+                pass
     except Exception:
         pass
 
     # ---------- 2. who-dat.as93.net ----------
-    if not registrar or not status_found or not created or not expires:
+    if not is_restricted and (not registrar or not status_found or not created or not expires):
         try:
             r = requests.get(f"https://who-dat.as93.net/{domain}", timeout=10)
             if r.status_code == 200:
                 data = r.json()
-                is_registered = True
+                # Chỉ đánh dấu registered khi thực sự đã đăng ký
+                if data.get("isRegistered") is True or data.get("id") or (data.get("registrar") and data.get("registrar") not in (None, {})):
+                    is_registered = True
                 if "registrar" in data and data["registrar"]:
                     reg_val = data["registrar"]
                     if isinstance(reg_val, str):
@@ -271,7 +295,7 @@ def get_domain_info(domain):
             pass
 
     # ---------- 3. rdap.cloud ----------
-    if not registrar or not status_found or not created or not expires:
+    if not is_restricted and (not registrar or not status_found or not created or not expires):
         try:
             r = requests.get(f"https://rdap.cloud/api/v1/{domain}", timeout=10)
             if r.status_code == 200:
@@ -315,7 +339,7 @@ def get_domain_info(domain):
             pass
 
     # ---------- 4. python-whois (fallback) ----------
-    if not is_registered or not registrar or not status_found or not created or not expires:
+    if not is_restricted and (not is_registered or not registrar or not status_found or not created or not expires):
         try:
             w = whois.whois(domain)
             if w.domain_name:
@@ -336,6 +360,16 @@ def get_domain_info(domain):
                     expires = format_date_short(w.expiration_date)
         except Exception:
             pass
+
+    # Domain bị Registry Policy cấm đăng ký
+    if is_restricted:
+        return (
+            "<span class='badge badge-danger'>Không thể đăng ký</span><br>"
+            "<span class='badge badge-warning'>Restricted by Registry Policy</span>",
+            "Registry Policy",
+            None,
+            None,
+        )
 
     if not is_registered:
         return "Chưa đăng ký / Ẩn thông tin", "Không có dữ liệu", None, None
@@ -849,6 +883,10 @@ HTML_TEMPLATE = """
                             <span class="badge badge-muted">Chưa đăng ký / Ẩn thông tin</span>
                             <span>Domain chưa đăng ký hoặc WHOIS bị ẩn</span>
                         </div>
+                        <div class="legend-row" data-key="restricted">
+                            <span class="badge badge-danger">Không thể đăng ký</span>
+                            <span>Bị Registry Policy cấm · không đăng ký được</span>
+                        </div>
                     </div>
                 </div>
                 <!-- Nhóm Cloudflare -->
@@ -1001,6 +1039,7 @@ HTML_TEMPLATE = """
                 if (st.includes("Khóa Update") || st.includes("Khóa Delete")) seenLegendKeys.add("updateLock");
                 if (st.includes("Redemption") || st.includes("Pending Delete")) seenLegendKeys.add("redemption");
                 if (st.includes("Chưa đăng ký") || st.includes("Ẩn thông tin")) seenLegendKeys.add("chuaDK");
+                if (st.includes("Không thể đăng ký") || st.includes("Restricted by Registry Policy")) seenLegendKeys.add("restricted");
             }
             if (options.check_cf && data.cf_add_status) {
                 const cf = data.cf_add_status;
@@ -1041,7 +1080,7 @@ HTML_TEMPLATE = """
                 const row = document.querySelector(`.legend-row[data-key="${key}"]`);
                 if (row) {
                     row.classList.add("show");
-                    if (["active","serverHold","clientHold","transferLock","pendingTransfer","updateLock","redemption","chuaDK"].includes(key)) {
+                    if (["active","serverHold","clientHold","transferLock","pendingTransfer","updateLock","redemption","chuaDK","restricted"].includes(key)) {
                         hasDomain = true;
                     } else {
                         hasCf = true;
